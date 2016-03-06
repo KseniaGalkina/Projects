@@ -1,0 +1,509 @@
+
+from __future__ import division
+
+import pandas as pd
+
+import numpy as np
+
+import random
+
+import os
+
+
+
+def select_subset(lst, n):
+
+    """randomly selects subset of n elements from list lst"""
+
+    if n>=len(lst):
+
+        return lst
+
+
+
+    lst1 = lst[:]
+
+    res = []
+
+    for i in xrange(n):
+
+        val = random.choice(lst1)
+
+        res.append(val)
+
+        lst1.remove(val)
+
+
+
+    return res
+
+
+
+
+
+def entropy(a, b):
+
+    a = float(a)
+
+    b = float(b)
+
+    if a==0 or b==0:
+
+        return 0
+
+    else:
+
+        return -a*1.0/(a+b)*np.log(a/(a+b)) - b*1.0/(a+b)*np.log(b/(a+b))
+
+
+
+
+
+
+
+def bagging(dataframe, n):
+
+    """bagging dataframe by randomly selecting rows for n times"""
+
+
+
+    res = []
+
+
+
+    for i in xrange(n):
+
+        row = random.choice(xrange(len(dataframe)))
+
+        res.append(dataframe.iloc[row].values)
+
+
+
+    return pd.DataFrame(res, None, dataframe.columns)
+
+
+
+
+
+def single_tree_split(dataframe, y, predictors, num_features):
+
+    """ Finds best single split for data with 2 classes, categorial data, based on information gain criteria
+
+
+
+    dataframe - pandas dataframe with data for model
+
+    y - name of dependent variable from dataframe
+
+    predictors - list of dataframe columns' names, used for modeling as predictors
+
+    num_features - number of feautures, randomly selected on each split"""
+
+
+
+    num_features = min(len(predictors), num_features)
+
+
+
+    #select feautures, used for the next split
+
+    selected_feautures = select_subset(predictors, num_features)
+
+
+
+    _entropy = entropy(1, 1)*len(dataframe)*100
+
+    split = []
+
+    for i in xrange(num_features):
+
+        #build pivot for each variable: column names are classes, row names - feature values
+
+        d = pd.pivot_table(dataframe[[y, selected_feautures[i]]], values = [y], index = [selected_feautures[i]], columns = [y], aggfunc=len, fill_value = 0)
+
+
+
+        if len(d.columns)>1:
+
+            #add a column with entropy for each feature value
+
+            entropies = []
+
+            for j in xrange(len(d)):
+
+                entropies.append(entropy(d[d.columns[0]].iloc[j], d[d.columns[1]].iloc[j]))
+
+            d["entropy"]=entropies
+
+
+
+            #calculate entropy for whole variable
+
+            entropy_feature = (sum(d[d.columns[0]]*d["entropy"]) + sum(d[d.columns[1]]*d["entropy"]))/len(dataframe)
+
+            entropy_set = entropy(sum(d[d.columns[0]]), sum(d[d.columns[1]]))
+
+
+
+            #find variable with least entropy. for this variable we calculate an output summary: for each value of this variable we calculate its entropy and average class
+
+            if entropy_feature < min(_entropy, entropy_set):
+
+                _entropy = entropy_feature
+
+                split = [{"var": selected_feautures[i],
+
+                        "value": list(d.index.values)[j],
+
+                        "entropy": d["entropy"].iloc[j],
+
+                        "sample_size": d[d.columns[0]].iloc[j]+d[d.columns[1]].iloc[j],
+
+                        "class": (d.columns[0] if d[d.columns[0]].iloc[j]>d[d.columns[1]].iloc[j] else d.columns[1])}
+
+                        for j in xrange(len(d))]
+
+
+
+    return split
+
+
+
+def Tree(dataframe, y, predictors, num_features, min_node_size):
+
+    """ Build tree for data with 2 classes, categorial data, based on information gain criteria
+
+
+
+    dataframe - pandas dataframe with data for model
+
+    y - name of dependent variable from dataframe
+
+    predictors - list of dataframe columns' names, used for modeling as predictors
+
+    num_features - number of feautures, randomly selected on each split
+
+    min_node_size - minimum node to be splitted"""
+
+
+
+    dataframes = [dataframe]
+
+
+
+    #calculate root value
+
+    d = pd.pivot_table(dataframe, index = [] , columns = [y], aggfunc = len)
+
+
+
+    if dataframe[y].nunique()>1:
+
+        if sum(d[d.columns[0]]) > sum(d[d.columns[1]]):
+
+            tree = [[{"class": d.columns[0]}]]
+
+        else:
+
+            tree = [[{"class": d.columns[1]}]]
+
+    else:
+
+        tree = [[{"class": d.columns[0]}]]
+
+
+
+    if dataframe[y].nunique()>1:
+
+        #iterate through a list of dataframes
+
+        while len(dataframes)>0:
+
+            tree_leafs_cur = len(dataframes)
+
+            trees_refined = []
+
+
+
+            for i in xrange(tree_leafs_cur):
+
+                df = dataframes[i]
+
+                if df[y].nunique()>1: #check that dataframe has at list 2 unique classes
+
+                    if len(df) >= min_node_size: #check that dataframe has at list minimum number of rows
+
+                        split = single_tree_split(df, y, predictors, num_features)
+
+                        if len(split):
+
+                            for j in xrange(len(split)):
+
+                                tree.append(tree[i]+[split[j]])
+
+                                if not (i in trees_refined):
+
+                                    trees_refined.append(i)
+
+                                dataframes.append(df[df[split[j]['var']].isin([split[j]['value']])])
+
+
+
+
+
+            if len(trees_refined)==0:
+                break
+
+
+            trees_refined = list(set(trees_refined))
+
+            for i in xrange(len(trees_refined)):
+
+                    del tree[max(trees_refined)]
+                    del dataframes[max(trees_refined)]
+                    trees_refined.remove(max(trees_refined))
+
+
+
+    return tree
+
+
+
+def Tree_print(tree):
+
+    return '\n'.join(str(x) for x in tree)
+
+
+
+def Tree_predict(tree, df):
+
+    """Uses tree to predict classes for dataframe 'df'. Outcome is stored in the list of the same size as dataframe"""
+
+    #no check is done if dataframe has all same variables
+
+
+
+    forecast = ['None' for i in xrange(len(df))] #forecast is a list, that stores forecast for df
+
+
+
+    #loop through rows of df, leafs and conditions of tree. Class is taken from the last condition of the tree
+
+    for row_id in xrange(len(df)):
+
+        for leaf in tree:
+
+            l = True
+
+            for j in xrange(len(leaf)):
+
+                cond = leaf[j]
+
+                if len(leaf)==1:
+
+                    break
+
+
+
+                if "var" in cond.keys():
+
+                    if df[cond["var"]].iloc[row_id]<>cond["value"]:
+
+                        l = False
+
+                        break
+
+            if l==True:
+
+                forecast[row_id] = leaf[len(leaf)-1]["class"]
+
+                break
+
+    if len(forecast)<>len(df):
+
+        print 'error in forecast length'
+
+    return forecast
+
+
+
+
+
+def Tree_error(tree, dataframe, y):
+
+    """calculates error of random forest rf on the dataframe"""
+
+    fact = list(dataframe[y].values)
+
+    forecast = Tree_predict(tree, dataframe)
+
+    print 'fact: ' + str(fact)
+
+    print 'forecast: ' + str(forecast)
+
+    if len(forecast)<>len(fact):
+
+        print 'error in forcast length'
+
+    return float(sum([1 for i in xrange(len(fact)) if fact[i]<>forecast[i]]))/float(len(fact))
+
+
+
+
+
+def randomForest(dataframe, y, predictors, num_features, N_trees, sample_size, min_node_size):
+
+    """ Build random forest for data with 2 classes, categorial data, based on information gain criteria
+
+
+
+    dataframe - pandas dataframe with data for model
+
+    y - name of dependent variable from dataframe
+
+    predictors - list of dataframe columns' names, used for modeling as predictors
+
+    num_features - number of feautures, randomly selected on each split
+
+    N_trees - number of trees
+
+    sample_size - bootstrap sample size
+
+    min_node_size - minimum node to be splitted"""
+
+
+
+    rf = []
+
+    for i in xrange(N_trees):
+
+        df = bagging(dataframe, sample_size)
+
+        rf.append(Tree(df, y, predictors, num_features, min_node_size))
+
+    return rf
+
+
+
+
+
+def randomForest_predict(rf, dataframe):
+
+    """Uses random forest rf to predict classes for dataframe. Outcome is stored in the list of the same size as dataframe"""
+
+    ensemble_results = []
+
+    voting_results = []
+
+
+
+    #forecast using every tree in rf
+
+    for tree in rf:
+
+        ensemble_results.append(Tree_predict(tree, dataframe))
+
+    ensemble_results = [list(i) for i in zip(*ensemble_results)]
+
+
+
+    #calculate average forecast
+
+    for r in ensemble_results:
+
+        voting_results.append(max(set(r), key=r.count))
+
+
+
+    return voting_results
+
+
+
+
+
+def randomForest_error(rf, dataframe, y):
+
+    """calculates error of random forest rf on the dataframe"""
+
+    fact = list(dataframe[y].values)
+
+    forecast = randomForest_predict(rf, dataframe)
+
+    if len(forecast)<>len(fact):
+
+        print 'error in forcast length'
+
+    print 'fact: ' + str(fact)
+
+    print 'forecast: ' + str(forecast)
+
+    return float(sum([1 for i in xrange(len(fact)) if fact[i]<>forecast[i]]))/float(len(fact))
+
+
+
+
+
+def main():
+
+    pth=os.path.dirname(os.path.abspath(__file__)) + "\\"
+
+    data = pd.read_csv(pth + "banks.csv", ',')
+
+
+
+    #use all variables as predictors, class - as target variable
+
+    predictors = list(set(data.columns.values))
+
+    predictors.remove("class")
+
+
+
+    #print tree
+
+    print "Tree is:"
+
+    tree = Tree(data, "class", predictors, 1000, 30)
+
+    print Tree_print(tree)
+
+    print 'Error: ' + str(Tree_error(tree, data, "class"))
+
+
+
+##
+##
+##    #print tree with 100% bagging sample
+##
+##    df = bagging(data, len(data))
+##
+##    print "\n Tree with bagging:"
+##
+##    print Tree_print(Tree(df, "class", predictors, 1000, 30))
+##
+##
+##
+##    #print tree with random variable selection
+##
+##    print "\n Tree with random variable selection:"
+##
+##    print Tree_print(Tree(data, "class", predictors, 2, 30))
+##
+##
+##
+##    #calculate random forest and print random forest error
+##
+##    print "\n random forest error:"
+##
+##    rf = randomForest(data,"class", predictors, 3, 50, len(data), 30)
+##
+####    print rf
+##
+##    print randomForest_error(rf, data, "class")
+##
+
+
+if __name__ == '__main__':
+
+    main()
+
