@@ -1,5 +1,5 @@
 # ---  read data from csv
-dat2<-read.csv('/Users/kseniagalkina/Desktop/R/Pima.csv',header=TRUE)
+dat2
 head(dat2)
 
 ## ---  calculating qda using MASS package
