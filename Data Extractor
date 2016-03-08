@@ -1,0 +1,173 @@
+import urllib2
+import urllib
+import os
+import string
+from os import listdir
+from time import sleep
+import re
+import csv
+import requests
+from requests.exceptions import HTTPError
+import six
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from PivotTable import *
+
+driver=''
+isrendered = True
+pth=os.path.dirname(os.path.abspath(__file__)) + "\\"
+
+def openBrowser():
+    """Initializes a browser to scrap data """
+
+    ## get the Firefox profile object
+    firefoxProfile = webdriver.FirefoxProfile()
+    ## Disable CSS
+    firefoxProfile.set_preference('permissions.default.stylesheet', 2)
+    ## Disable images
+    firefoxProfile.set_preference('permissions.default.image', 2)
+    ## Disable Flash
+    firefoxProfile.set_preference('dom.ipc.plugins.enabled.libflashplayer.so', 'false')
+
+    ## Set the modified profile while creating the browser object
+    driver = webdriver.Firefox(firefoxProfile)
+
+def closeBrowser():
+    """ Terminates browser"""
+    driver.close()
+
+
+def robotalert(s):
+    """ indicate if robot alert detected in html source by matching some
+        keyword in page text.
+        Should be changed for every individual site
+    """
+    if 'input type="text" name="keystring"' in s:
+        print 'robot alert ...'
+        return 1
+    else:
+        return 0
+
+
+def get_source(page):
+    """get source of data by link"""
+
+    if page.find('http') >= 0:
+        page=re.split('http://', page)[1]
+
+    while True:
+        try:
+			if isrendered:
+				url=urllib2.urlopen("http://" +  page) #urllib.quote(page))
+				source=url.read()
+			else:
+				driver.get("http://" +  page)
+				sleep(5)
+				source=driver.page_source
+
+
+			if robotalert(source):
+			 sleep(1)
+			else:
+			 return source
+			 break
+
+        except urllib2.HTTPError, err:
+           if err.code == 404:
+               print "Error " + page + '\n'
+               return ''
+           else:
+               raise
+
+        except urllib2.URLError, err:
+            print 'Check connection'
+            sleep(5)
+
+
+def parse_single_page(address, mask, charset):
+
+    print address
+
+    if address.find('www.') >= 0 or address.find('http') >= 0:
+##        source = get_source(address.encode('utf-8'))
+        source = get_source(address)
+    else:
+        source = open(address,'r').read()
+
+    pattern= re.findall(mask, source, re.DOTALL | re.VERBOSE | re.IGNORECASE)
+    return pattern
+
+
+def parse_multiple_pages(pages_links_list, output_file, mask, charset):
+
+    result_file = open(output_file, 'wb')
+
+    for row in pages_links_list:
+##        data=parse_single_page(row[0].decode('utf-8', 'ignore'), mask, charset)
+        data=parse_single_page(row, mask, charset)
+
+        for item in data:
+            res=row
+            if isinstance(item, basestring):
+                res=res + ';' + item
+            else:
+                for t in item:
+                    res=res + ';' + t
+
+            result_file.write(res.encode('utf-8', 'ignore') + '\n')
+
+    result_file.close()
+
+def save_pages(pages_links_list, destination_folder, saved_files_dict):
+
+    valid_chars = "-_() %s%s" % (string.ascii_letters, string.digits)
+    result_file = csv.writer(open(saved_files_dict, 'wb'), delimiter=';')
+
+    for row in pages_links_list:
+        source = get_source(row)
+
+        cnt=0
+        while True:
+            cnt=cnt+1
+            fp=row[len(row)-25:]+str(cnt)
+            fp=''.join(c for c in fp if c in valid_chars)
+            fp = os.path.join(destination_folder, fp + '.txt')
+            print fp
+            if os.path.isfile(fp):
+                1
+            else:
+                file(fp, 'w').write(source)
+                result_file.writerow([fp.encode('utf-8', 'ignore')])
+                break
+
+
+def get_folder_files_list(link_to_folder, file_extention):
+    f = []
+    for root, dirs, files in os.walk(link_to_folder):
+        for file in files:
+        	if file.endswith('.' + file_extention):
+        		f.append(file)
+    return f
+
+
+def read_file_as_list(input_file, column = -1, add_fixed_part = ''):
+    data = list(csv.reader(open(input_file, 'rb'), delimiter=";"))
+    if column < 0:
+        return data
+    else:
+        return [add_fixed_part + str(data[i][column]) for i in xrange(len(data))]
+
+def main():
+##    parse_multiple_pages('numbers.csv', 'links1.csv', "protocols(.*?)>", 'utf-8')
+##    parse_multiple_pages('protocols.csv', 'links2.csv', "/223/purchase/public/print-form/show.html(.*?);", 'utf-8')
+##    save_pages('final.csv', r'C:\Users\Mikhail Yakubovskiy\Documents\3. tasks\zakupki\Files', 'linksToPages.csv')
+##    parse_multiple_pages('linksToPages.csv', 'data2.csv', "<tr(.*?):(.*?)tr>", 'utf-8')
+
+
+##  get links to pages to scrap first
+    parse_multiple_pages(read_file_as_list(pth + 'links1.csv', 0), 'results1.csv', 'data-href="(.*?)".*?src="(.*?)"', 'utf-8')
+    parse_multiple_pages(read_file_as_list(pth + 'results1.csv', 1, "http://www.re-store.ru"), 'results2.csv', 'sku">(.*?)<', 'utf-8')
+##    save_pages(read_file_as_list(r'links1.csv', 0), pth + '\files', 'links2.csv')
+
+if __name__ == '__main__':
+    main()
