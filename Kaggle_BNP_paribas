@@ -1,0 +1,169 @@
+library(gbm)
+library(AUC)
+
+plot_ROC_curve <- function (forecast, actual) {
+	pred <- roc(prediction(forecast, actual))
+	print(paste(sep = "", "Area under ROC curve = ", auc(pred)))
+	plot(pred)
+}
+
+log_loss <- function(predicted, actual) {
+  predicted<-(pmax(predicted, 0.00001))
+  predicted<-(pmin(predicted, 0.99999))
+  result<- -1/length(actual)*(sum((actual*log(predicted)+(1-actual)*log(1-predicted))))
+  return(result)
+}
+
+remove_dummy_cols <- function(data, min_empty_share = 0.02) {
+  #remove empty columns
+  empty_cols <- c()
+  for (i in 1:ncol(data)){
+    if (lapply(data[,i], class)[[1]]=="factor") {
+      repeats = data.frame(table(data[,i]))
+      if (nrow(repeats)<=1){
+        empty_cols <- c(empty_cols, i)}
+    }
+    else 
+    {
+      if (sum(is.na(data[,i]))/nrow(data)>1-min_empty_share) {empty_cols <- c(empty_cols, i)}
+      
+    }
+  }
+  if (length(empty_cols)) {  data <- data[, -empty_cols] }
+  
+  return(data)
+}
+
+remove_rare_values <- function(data, n_unique=10) {
+  #replace rare values
+  for (i in 1:ncol(data)){
+    if (lapply(data[,i], class)[[1]]=="factor") {
+      repeats = data.frame(table(data[,i]))
+      if (nrow(repeats)>n_unique) {
+        d <- as.vector(data[, names(data)[i]])
+        d <- replace(d, !(d %in% repeats$Var1[order(repeats$Freq, decreasing = TRUE)[1:n_unique]]), "other")
+        data[, names(data)[i]] <- as.factor(d)
+      }
+    }
+  }
+  return(data)
+}
+
+
+factors_list <- function(data, min_freq=20) {
+  #add dummy columns with factors
+  remove_cols <- data.frame(var = c(TRUE), val = c(TRUE))
+  col_start = ncol(data)
+  for (i in 1:col_start){
+    if (lapply(data[,i], class)[[1]]=="factor") {
+      repeats = data.frame(table(data[,i]))
+      if (nrow(repeats)>2) {
+        for (j in 1:(nrow(repeats))) {
+          if (repeats$Freq[j]>=min_freq) {
+            remove_cols <- rbind(remove_cols, c(names(data)[i], levels(repeats$Var1)[j]))
+            
+          }
+        }
+      }
+    }
+  }
+  
+  return(remove_cols)
+}
+
+factors_to_dummy <- function(data, factor_list) {
+  for (i in 1:nrow(factor_list)) {
+    if (factor_list$var[i] %in% names(data)) {
+      data[paste(factor_list$var[i], factor_list$val[i], sep = "_")] <- as.factor(as.vector(data[, factor_list$var[i]])==factor_list$val[i])
+    }
+  }
+  for (i in 1:nrow(factor_list)) {
+    if (factor_list$var[i] %in% names(data)) {  data <- data[, -which(names(data)==factor_list$var[i])] }
+  }
+  return(data)
+}
+
+setwd('C:/Users/Mikhail Yakubovskiy/Documents/4. learning/kaggle/BNP Paribas')
+data_train <- read.table(file = 'train.csv', header = TRUE, sep = ',')
+table(data_train$target) #test ratio between number of cases in different classes
+table(complete.cases(data_train)) #test how many missing values we have
+
+#data cleaning and preprocessing:
+#variables: here we can create additional dummy variables for factors or put numeric into buckets
+#fill NAs:  split model by 2 (makes most sense due to data structure) - or use bucketing - or fill with values
+#build new vars from existing
+#test multicorrel, use principal components
+#we can try to remove some vars - to test it compare train error with all and with part of variables
+data_train <- subset(data_train, select=-c(ID))
+
+data_train_full <- subset(data_train, complete.cases(data_train))
+f_list <- factors_list(data_train_full, 100)
+data_train_full <- factors_to_dummy(data_train_full, f_list)
+
+data_train_miss <- subset(data_train, !complete.cases(data_train))
+data_train_miss <- remove_dummy_cols(data_train_miss, 0.1)
+f_list <- factors_list(data_train_miss, 100)
+data_train_miss <- factors_to_dummy(data_train_miss, f_list)
+for (i in (1:ncol(data_train_miss))) {
+  if (sum(is.na(data_train_miss[, i]))>0) {
+    data_train_miss[is.na(data_train_miss[, i]), i] <- mean(data_train_miss[, i], na.rm = TRUE)
+  }
+}
+table(complete.cases(data_train_miss))
+
+#data_train <- remove_rare_values(data_train, 20)
+
+t_start = Sys.time()
+fit_gbm_miss <- gbm(target ~.,
+			distribution = "bernoulli",	#loss function
+			data = data_train_miss,
+			n.trees = 200, 			#max number of trees, to be selected based on accuracy
+			cv.folds = 3, 				#number of partitions for validation
+			interaction.depth=4,		#depth of tree, to be optimized
+			shrinkage = 0.2,			#shrinkage coefficient (typically between [0.001, 0.01]), to be optimized
+			bag.fraction = 0.5,			#subsampling rate, used to increase robustness and accuracy, can be optimized
+			n.cores = 4)
+print(difftime(Sys.time(), t_start, units = c("mins")))
+log_loss(unlist(lapply(fit_gbm_miss$cv.fitted, function(x) 1/(1+exp(-x)))), data_train_miss$target)
+min(fit_gbm_miss$cv.error)
+
+
+#select optimal number of trees
+best.iter <- gbm.perf(fit_gbm_miss, method="cv")
+print(best.iter)
+
+t_start = Sys.time()
+fit_gbm_full <- gbm(formula = target~., 
+               distribution = "bernoulli",	#loss function
+               data = data_train_full,
+               n.trees = 300, 			#max number of trees, to be selected based on accuracy
+               cv.folds = 3, 				#number of partitions for validation
+               interaction.depth=2,		#depth of tree, to be optimized
+               shrinkage = 0.05,			#shrinkage coefficient (typically between [0.001, 0.01]), to be optimized
+               bag.fraction = 0.5,			#subsampling rate, used to increase robustness and accuracy, can be optimized
+               n.cores = 4)
+print(difftime(Sys.time(), t_start, units = c("mins")))
+#log_loss(unlist(lapply(fit_gbm$cv.fitted, function(x) 1/(1+exp(-x)))), data_train_miss$target)
+min(fit_gbm_full$cv.error)
+
+#select optimal number of trees
+best.iter <- gbm.perf(fit_gbm_full, method="cv")
+print(best.iter)
+
+#here try other shrinkage and interaction.depth to minimize test error and select optimal number of trees
+
+#show influence of each variable on the output
+summary.gbm(fit_gbm_miss)
+
+#shows marginal effect of each variable
+plot.gbm(fit_gbm, c("v50", "v66_C"))
+
+#we can try to remove some vars
+
+#calculates forecast on test set
+data_test <- read.table(file = 'test.csv', header = TRUE, sep = ',')
+data_test <- factors_to_dummy(data_test, f_list)
+forecast <- predict.gbm(fit_gbm, data_test, type = "response")
+write.table(data.frame(ID = data_test$ID, PredictedProb = forecast), file = 'forecast.csv', sep = ',', row.names = FALSE)
+rm(data_test)
+rm(forecast)
