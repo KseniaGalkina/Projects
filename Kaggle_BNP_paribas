@@ -83,7 +83,7 @@ factors_to_dummy <- function(data, factor_list) {
   return(data)
 }
 
-setwd('C:/Users/Mikhail Yakubovskiy/Documents/4. learning/kaggle/BNP Paribas')
+setwd('BNP Paribas')
 data_train <- read.table(file = 'train.csv', header = TRUE, sep = ',')
 table(data_train$target) #test ratio between number of cases in different classes
 table(complete.cases(data_train)) #test how many missing values we have
