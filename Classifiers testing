@@ -1,0 +1,121 @@
+Mode <- function (x, na.rm) {
+  xtab <- table(x)
+  xmode <- names(which(xtab == max(xtab)))
+  if (length(xmode) > 1) xmode <- ">1 mode"
+  return(xmode)
+}
+
+FillNAs <- function(data) {
+  for (var in 1:ncol(data)) {
+    if (class(data[,var]) %in% c ("numeric","integer")){
+      data[is.na(data[,var]),var] <- mean(data[,var], na.rm = TRUE)
+    } else if (class(data[,var]) %in% c ("factor")) {
+      data[is.na(data[,var]),var] <- Mode(data[,var], na.rm = TRUE)
+    }
+  }
+  return(data)
+}
+
+
+#convert factors into dummy
+factors_list <- function(data, min_freq=20) {
+  #add dummy columns with factors
+  remove_cols <- data.frame(var = c(TRUE), val = c(TRUE))
+  col_start = ncol(data)
+  for (i in 1:col_start){
+    if (lapply(data[,i], class)[[1]]=="factor") {
+      repeats = data.frame(table(data[,i]))
+      if (nrow(repeats)>2) {
+        for (j in 1:(nrow(repeats))) {
+          if (repeats$Freq[j]>=min_freq) {
+            remove_cols <- rbind(remove_cols, c(names(data)[i], levels(repeats$Var1)[j]))
+            
+          }
+        }
+      }
+    }
+  }
+  
+  return(remove_cols)
+}
+
+factors_to_dummy <- function(data, factor_list) {
+  for (i in 1:nrow(factor_list)) {
+    if (factor_list$var[i] %in% names(data)) {
+      data[paste(factor_list$var[i], factor_list$val[i], sep = "_")] <- as.factor(as.vector(data[, factor_list$var[i]])==factor_list$val[i])
+    }
+  }
+  for (i in 1:nrow(factor_list)) {
+    if (factor_list$var[i] %in% names(data)) {  data <- data[, -which(names(data)==factor_list$var[i])] }
+  }
+  return(data)
+}
+
+
+#calculate confusion matrix
+confusion <- function(a, b){
+  tbl <- table(a, b)
+  mis <- 1 - sum(diag(tbl))/sum(tbl)
+  list(table = tbl, misclass.prob = mis)
+}
+
+#read data
+data_train <- read.table(file = 'Training.csv', header = TRUE, sep = ';', dec=',')
+data_test <- read.table(file = ‘Validation.csv', header = TRUE, sep = ';', dec=',', colClasses = as.vector(sapply(data_train, class)))
+
+#check data structure
+str(data_train)
+
+#try quick algorithm, that deals with NAs to quickly assess easy wins (rpart)
+library(rpart)
+library(rpart.plot)
+
+fit<-rpart(classLabel~. ,data=data_train, control=rpart.control(cp=0.005, minbucket = 10, maxcompete = 6, maxdepth = 10))
+fit
+prp(fit, extra=1, type = 2)
+
+#model outcome
+#v7=f => no
+#v7!=f=> yes
+#Accuracy: 50.5%
+
+
+#combine data into 1 dataframe to make all changes simalteniously
+data_train["dtype"] <- "train"
+data_test["dtype"] <- "test"
+
+data <- rbind(data_train, data_test)
+data$dtype <- as.factor(data$dtype)
+
+data <- data[, !(names(data) %in% c("v7"))]
+
+#fill NAs
+data <- FillNAs(data)
+
+#convert factors with 3+ levels to dummies
+f_list <- factors_list(data, 20)
+data <- factors_to_dummy(data, f_list)
+rm(f_list)
+
+
+#apply random forest
+library(randomForest)
+fit.rf <- randomForest(classLabel~., data=subset(data, data["dtype"]=="train"), importance=TRUE, ntree=100)
+plot(fit.rf)
+confusion(predict(fit.rf, subset(data, data["dtype"]=="train")) == 'yes.', subset(data, data["dtype"]=="train")$classLabel  == 'yes.')
+confusion(predict(fit.rf, subset(data, data["dtype"]=="test"))  == 'yes.', subset(data, data["dtype"]=="test")$classLabel  == 'yes.')
+#accuracy - 173 correct, 27 incorrect
+
+
+#apply gbm
+library(gbm)
+data["class"]<-NA
+data$class[data$classLabel=="yes."]<-1
+data$class[data$classLabel=="no."]<-0
+fit.gbm <- gbm(class~ ., data=subset(data, data["dtype"]=="train"), dist="adaboost", n.tree = 700,
+                shrinkage = 0.1, bag.fraction = 0.5, cv.folds = 3, interaction.depth=4)
+best.iter <- gbm.perf(fit.gbm, method="cv")
+confusion(predict(fit.gbm, subset(data, data["dtype"]=="train")) > 0, subset(data, data["dtype"]=="train")$class > 0)
+confusion(predict(fit.gbm, subset(data, data["dtype"]=="test")) > 0, subset(data, data["dtype"]=="test")$class > 0)
+
+
