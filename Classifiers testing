@@ -80,7 +80,7 @@ prp(fit, extra=1, type = 2)
 #Accuracy: 50.5%
 
 
-#combine data into 1 dataframe to make all changes simalteniously
+#combine data into 1 dataframe to make all changes simultaneously
 data_train["dtype"] <- "train"
 data_test["dtype"] <- "test"
 
