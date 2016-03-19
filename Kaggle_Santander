@@ -1,0 +1,48 @@
+data_train <- read.table(file = '/Users/kseniagalkina/Desktop/Santander/train.csv', header = TRUE, sep = ',', dec='.')
+data_test <- read.table(file = '/Users/kseniagalkina/Desktop/Santander/test.csv', header = TRUE, sep = ',', dec='.') 
+data_test["TARGET"]<-0
+library(rpart)
+library(randomForest)
+library(party)
+
+#combine data into 1 dataframe to make all changes simultaneously
+data_train["dtype"] <- "train"
+data_test["dtype"] <- "test"
+data <- rbind(data_train, data_test)
+data$dtype <- as.factor(data$dtype)
+
+#drop columns with only 1 unique value
+drop_cols <- c()
+for (i in 1:ncol(data_train)) {
+  if (length(table(data_train[,i]))==1) {drop_cols <- rbind(drop_cols, names(data)[i])}
+}
+data <- data[, -which(names(data) %in% drop_cols)]
+rm(drop_cols, i)
+
+library(gbm)
+
+fit.gbm <- gbm(TARGET~ ., data=subset(data, data["dtype"]=="train"), dist="bernoulli", n.tree = 500, shrinkage = 0.1, bag.fraction = 0.5, cv.folds = 5, interaction.depth=1)
+
+best.iter <- gbm.perf(fit.gbm, method="cv")
+min(fit.gbm$cv.error) #0.2709743
+
+
+#feature engeneering vars
+data <- data[, -which(names(data) %in% c("ID", "saldo_comb", "saldo_sum"))]
+
+library(glmnet)
+saldo_vars <- names(data[,grep("saldo_var", names(data))])
+fit.lm <- glmnet(as.matrix(subset(data[,saldo_vars], data["dtype"]=="train")), as.matrix(subset(data, data["dtype"]=="train")$TARGET), family = "binomial")
+fit.rpart <- rpart(TARGET~ ., data=(subset((data[,c("TARGET", saldo_vars)]), data["dtype"]=="train")), control = rpart.control(cp = 0.001))
+fit.rpart
+
+data["saldo_sum"]<-0
+for (i in 1:length(saldo_vars)) { data["saldo_sum"]<-data["saldo_sum"]+data[saldo_vars[i]] }
+fit.gbm <- gbm(TARGET~ ., data=subset(data, data["dtype"]=="train"), dist="bernoulli", n.tree = 500, shrinkage = 0.1, bag.fraction = 0.5, cv.folds = 5, interaction.depth=1)
+
+var_perf <- summary(fit.gbm, plotit = FALSE)
+var_perf <- as.vector(subset(var_perf$var, var_perf$rel.inf > 0))
+
+
+res = predict.gbm(fit.gbm, data_test, type = "response")
+write.table(data.frame(ID = data_test$ID, TARGET = res), file = '/Users/kseniagalkina/Desktop/Santander/forecast.csv', sep = ',', row.names = FALSE)
