@@ -1,0 +1,46 @@
+import urllib.request
+import json
+import csv
+import pandas as pd
+import numpy as np
+from functools import partial
+url = ""
+response = urllib.request.urlopen(url)
+text = response.read().decode()
+json_parsed = json.loads(text)
+json_parsed
+header = {}
+for country in json_parsed:
+    for k in country.keys():
+        if not (k in header.keys()):
+            header[k]=1
+header = list(header.keys())
+
+f = open("countries-raw.csv",'w')
+f1 = csv.writer(f)
+    
+f1.writerows([header])
+
+for country in json_parsed:
+    res=[]
+    for feature in header:
+        if feature in country.keys():
+            res.append(country[feature])
+        else:
+            res.append("")
+    f1.writerows([res]) 
+    
+f.close()
+df = pd.read_csv("countries-raw.csv")
+df
+df.count()
+df.isnull().any()
+df["unemployment_rate"].fillna(df["unemployment_rate"].mean(), inplace=True)
+df["inflation_rate"].fillna(df["inflation_rate"].mean(), inplace=True)
+df["life_expectancy"].fillna(df["life_expectancy"].mean(), inplace=True)
+df
+f2 = {'population':['sum'], 'unemployment_rate':['mean'], 'inflation_rate':['mean'],'gdp_per_capita':['mean'],
+    'area':['sum'], 'birth_rate':['mean']}
+df_gr = df.groupby(["continent","country"]).agg(f2)
+df_gr
+df_gr.to_csv("countries-clean.csv", sep=',')
