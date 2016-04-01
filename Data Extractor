@@ -158,15 +158,12 @@ def read_file_as_list(input_file, column = -1, add_fixed_part = ''):
         return [add_fixed_part + str(data[i][column]) for i in xrange(len(data))]
 
 def main():
-##    parse_multiple_pages('numbers.csv', 'links1.csv', "protocols(.*?)>", 'utf-8')
-##    parse_multiple_pages('protocols.csv', 'links2.csv', "/223/purchase/public/print-form/show.html(.*?);", 'utf-8')
-##    save_pages('final.csv', r'C:\Users\Mikhail Yakubovskiy\Documents\3. tasks\zakupki\Files', 'linksToPages.csv')
-##    parse_multiple_pages('linksToPages.csv', 'data2.csv', "<tr(.*?):(.*?)tr>", 'utf-8')
+
 
 
 ##  get links to pages to scrap first
     parse_multiple_pages(read_file_as_list(pth + 'links1.csv', 0), 'results1.csv', 'data-href="(.*?)".*?src="(.*?)"', 'utf-8')
-    parse_multiple_pages(read_file_as_list(pth + 'results1.csv', 1, "http://www.re-store.ru"), 'results2.csv', 'sku">(.*?)<', 'utf-8')
+    parse_multiple_pages(read_file_as_list(pth + 'results1.csv', 1, ""), 'results2.csv', 'sku">(.*?)<', 'utf-8')
 ##    save_pages(read_file_as_list(r'links1.csv', 0), pth + '\files', 'links2.csv')
 
 if __name__ == '__main__':
