@@ -1,0 +1,150 @@
+import json
+import requests
+import csv
+import re
+import pandas as pd
+import matplotlib.pyplot as plt
+plt.style.use('ggplot')
+
+#main parameters of script
+url = 'https://maps.googleapis.com/maps/api/directions/json?'
+result_csv='result_new.csv'
+
+#parameters of google directions API
+params = dict(
+    sensor='false',
+    mode='driving',
+    region='ie',
+    units='metric',
+    origin = "University College Dublin, Belfield, Dublin, Ireland",
+    destination = "O'Connell Bridge, Dublin, Ireland",
+    key='AIzaSyAQyrtCCmW08qVL-AvF9Pql2JElaHoWzuw'
+)
+
+#list of departure times (in UNIX timestamp format) - every 5 min of 18 May 2016
+#this code will only work if future date is used
+departure_time = [1463529600+i*300 for i in range(12*24)]
+
+def get_google_direction(t):
+    par=params
+    par['departure_time']=t
+
+    url1=url
+
+    for key in par:
+        url1=url1 + '&' + key + '=' + str(par[key])
+
+    data = requests.get(url=url1)
+    binary = data.content
+    try:
+        output = json.loads(binary.decode('utf-8'))
+    except:
+        return ''
+
+    d=str(t) + ";"
+
+    for route in output['routes']:
+            for leg in route['legs']:
+                d=d + str(leg['duration']['value']) + ";"
+
+                if par['mode']=='driving':
+                    if 'duration_in_traffic' in leg.keys():
+                        d=d + str(leg['duration_in_traffic']['value']) + ";"
+                    else:
+                        d=d + ";"
+
+                d=d + str(leg['distance']['value']) + ";"
+
+    return d + '\n'
+
+
+def main():
+    # get API data
+    result_file = open(result_csv, 'w')
+    result_file.writelines("timestamp;duration_in_sec;duration_in_traffic_sec;distance_meters;""\n")
+    for t in departure_time:
+        res = ''
+        try:
+            res = get_google_direction(t)
+        except:
+            print("Cannot download for time " + str(t))
+        result_file.writelines(res)
+    result_file.close()
+
+    #read data
+    data = pd.read_csv('result_new.csv', sep=';')
+    #handle data
+    data = data.ix[:, 0:4]
+    # creating new measures
+    data["velocity"] = pd.Series(((data["distance_meters"]/1000)/(data["duration_in_traffic_sec"]/3600)),index=data.index)
+    data["timestamp_in_hours"] = pd.Series(((data["timestamp"] - min(data["timestamp"]))/3600),index=data.index)
+    data["duration_in_hours_traffic"] = pd.Series((data["duration_in_traffic_sec"]/3600),index=data.index)
+
+    #calculating mean values for each column - to calculate average velocity and duration from UCD to O'Connell
+    #calculated velocity
+    print("Velocity average",data["velocity"].mean())
+    #duration of journey taking into account traffic situation
+    print("Duration in hours verage",data["duration_in_hours_traffic"].mean())
+    #summary statistics for duration variables
+    print("Duration in hours - statistics",data["duration_in_hours_traffic"].describe())
+    ##minimum time from UCD to O'Connell - 19 minutes, max - 37 minutes
+    print("Velocity - statistics",data["velocity"].describe())
+    #minimum velocity - 16km/h, maximum - 32 km/h
+
+    #minimum and maximum values for marking it on the plot
+    index_=data["velocity"].idxmax()
+    index_min = data["velocity"].idxmin()
+    index_1 = data["duration_in_hours_traffic"].idxmax()
+    index_min_1 = data["duration_in_hours_traffic"].idxmin()
+
+    #plotting velocity for the 18th of May
+    fig = plt.figure()
+    ax = fig.gca()
+    ax.set_autoscale_on(False)
+    ax.axis([0, 24, 0, 50])
+    plt.scatter(data["timestamp_in_hours"], data["velocity"])
+
+    fig.suptitle("Velocity during the day")
+    plt.xlabel("Timestamp_in_hours")
+    plt.ylabel("Velocity_in_km_h")
+
+    ax.annotate('Maximum velocity', xy=(data["timestamp_in_hours"][index_], data["velocity"][index_]), xycoords='data',
+                xytext=(0.7,0.7), textcoords='axes fraction',
+                arrowprops=dict(facecolor='black', shrink=0.05),
+                horizontalalignment='right', verticalalignment='top',
+                )
+    ax.annotate('Minimum velocity', xy=(data["timestamp_in_hours"][index_min], data["velocity"][index_min]), xycoords='data',
+                xytext=(0.9, 0.7), textcoords='axes fraction',
+                arrowprops=dict(facecolor='black', shrink=0.05),
+                horizontalalignment='right', verticalalignment='top',
+                )
+    plt.savefig('velocity.png')
+
+
+
+    # plotting duration for the 18th of May
+    fig1 = plt.figure()
+    ax1 = fig1.gca()
+    ax1.set_autoscale_on(False)
+    ax1.axis([0, 24, 0, 1])
+    plt.scatter(data["timestamp_in_hours"], data["duration_in_hours_traffic"])
+
+    fig1.suptitle("Duration_in_hours_traffic")
+    plt.xlabel("Timestamp_in_hours")
+    plt.ylabel("Duration_in_hours_traffic")
+    ax1.annotate('Maximum duration', xy=(data["timestamp_in_hours"][index_1], data["duration_in_hours_traffic"][index_1]), xycoords='data',
+                xytext=(0.9, 0.7), textcoords='axes fraction',
+                arrowprops=dict(facecolor='black', shrink=0.05),
+                horizontalalignment='right', verticalalignment='top',
+                )
+
+    ax1.annotate('Minimum duration', xy=(data["timestamp_in_hours"][index_min_1], data["duration_in_hours_traffic"][index_min_1]),
+                 xycoords='data',
+                 xytext=(0.7, 0.7), textcoords='axes fraction',
+                 arrowprops=dict(facecolor='black', shrink=0.05),
+                 horizontalalignment='right', verticalalignment='top',
+                 )
+    plt.savefig('duration.png')
+
+if __name__ == '__main__':
+    main()
